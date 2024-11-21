@@ -1,0 +1,538 @@
+create database SalesInsights;
+use SalesInsights;
+
+-- 1. Set the Primary Key for the Customers Table
+ALTER TABLE customers
+ADD PRIMARY KEY (customer_id);
+
+-- 2. Set the Primary Key for the Products Table
+ALTER TABLE products
+ADD PRIMARY KEY (product_id);
+
+-- 3. Set the Primary Key for the Inventory Movements Table
+ALTER TABLE inventory_movements
+ADD PRIMARY KEY (movement_id);
+
+-- 4. Set the Primary Key for the Sales Table
+ALTER TABLE sales
+ADD PRIMARY KEY (sale_id);
+select * from customers;
+select * from inventory_movements;
+select* from products;
+select* from sales;
+select*from sales
+where product_id='47' and discount_applied=0;
+
+													#Module1
+# Total Sales Per month
+	select date_format(sale_date,"%Y-%m") as months, SUM(quantity_sold) as Total_Quantity,ROUND(SUM(Total_amount),2) as Total_Revenue
+	from
+	sales
+group by months
+order by months;
+# Average Discount per Month:
+	select date_format(sale_date,'%Y-%m') as months,AVG(discount_applied) as average_Discount ,round(SUM(total_amount),2) as Total_Sales
+	from
+	sales
+	group by months;
+    select date_format(sale_date,'%Y-%m') as months,round(AVG(p.price*s.quantity_sold*(s.discount_applied/100)),2) as average_discount,round(SUM(s.total_amount),2) as totalSales
+    from
+    sales s left join products p on s.product_id=p.product_id
+    group by 1;
+    
+													#Module2
+# Identify high-value customers
+with hvc as (
+select c.customer_id,c.first_name,c.email,c.gender,c.date_of_birth,SUM(s.total_amount) as total_sales,
+rank() over(order by SUM(s.total_amount) desc) as spending_rank
+from
+sales s left join customers c on s.customer_id=c.customer_id
+group by c.customer_id,c.first_name,c.email,c.gender,c.date_of_birth)
+
+select
+customer_id,first_name,email,gender,date_of_birth,total_sales,spending_rank
+from hvc
+where spending_rank<10
+order by spending_rank;
+#Identify the oldest customers  Find the details of customers born in the 1990s, including their total spending and
+ #specific order details
+ SELECT
+    c.customer_id,
+    c.first_name,
+    c.last_name,
+    c.date_of_birth,
+    c.email,
+    SUM(s.total_amount) AS total_spending,
+    GROUP_CONCAT(s.sale_id) AS order_ids,
+    GROUP_CONCAT(s.product_id) AS product_ids,
+    GROUP_CONCAT(s.quantity_sold) AS quantities,
+    GROUP_CONCAT(s.sale_date) AS sale_dates
+FROM
+    Customers c
+JOIN
+    Sales s ON c.customer_id = s.customer_id
+WHERE
+    c.date_of_birth BETWEEN '1990-01-01' AND '1999-12-31'
+GROUP BY
+    c.customer_id,
+    c.first_name,
+    c.last_name,
+    c.date_of_birth,
+    c.email
+ORDER BY
+    total_spending DESC;
+
+  /*Customer Segmentation:
+ ○ Use SQLto create customer segments based on their total spending (e.g., Low
+ Spenders, High Spenders)*/
+select c.customer_id,c.first_name,SUM(s.total_amount) as total_spending,
+case 
+	when SUM(s.total_amount)<500 then "LowSpenders"
+    when SUM(s.total_amount) between 500 and 2000 then "MediumSpenders"
+    when SUM(s.total_amount)>2000 then "HighSpenders"
+end as CustomerSpendingSegment
+from sales s 
+left join customers c on s.customer_id=c.customer_id
+group by c.customer_id,c.first_name
+order by total_spending desc;
+                                       #Module3
+# Stock Management
+WITH ProductSales AS (
+    SELECT 
+        s.product_id,
+        p.product_name,
+        p.stock_quantity,
+        COALESCE(SUM(s.quantity_sold), 0) AS total_sold,
+        COALESCE(SUM(s.quantity_sold) / NULLIF(COUNT(DISTINCT date_format(s.sale_date,'%m')), 0), 0) AS avg_monthly_sales
+    FROM 
+        sales s
+    LEFT JOIN 
+        products p ON s.product_id = p.product_id
+    GROUP BY 
+        s.product_id, p.product_name, p.stock_quantity
+)
+SELECT 
+    product_id,
+    product_name,
+    stock_quantity,
+    avg_monthly_sales,
+    CASE 
+        WHEN avg_monthly_sales > 0 THEN CEIL(10 + avg_monthly_sales * 1.5) 
+        ELSE 10
+    END AS recommended_restock
+FROM 
+    ProductSales
+WHERE 
+    stock_quantity < 10;
+ /*Inventory Movements Overview:
+ ○ Create a report showing the daily inventory movements (restock vs. sales) for
+ each product over a given period*/
+ select movement_date,product_id,
+ SUM(case 
+	when movement_type ='IN' then quantity_moved
+    else 0
+    end) as restocks, SUM(case 
+	when movement_type ='OUT' then quantity_moved
+    else 0
+    end) as sales
+from
+inventory_movements
+where movement_date >= DATE_SUB((select max(movement_date) from inventory_movements), INTERVAL 6 MONTH)
+group by movement_date,product_id
+order by sales desc;
+
+
+#rank each product in each category by their prices
+select category,product_name,price,
+rank() over (partition by category order by price desc) as product_rank
+from
+products;
+                     #Module4
+#AverageOrderSize
+select 
+p.product_id,p.product_name,avg(s.quantity_sold) as averageordersize
+from sales s 
+left join products p on s.product_id=p.product_id
+group by 1,2
+order by 1,2;
+#products with most recentstocks
+SELECT
+ 
+ product_id,MAX(movement_date) as mostrecentmovements
+FROM
+    inventory_movements
+WHERE
+    movement_date >= DATE_SUB((SELECT MAX(movement_date) FROM inventory_movements), INTERVAL 6 MONTH) and movement_type='IN'
+group by 1;
+                              -- Advanced Challenges --
+/*(select p.product_name,p.price*(s.discount_applied/100) as Price_Change,s.sale_date
+from sales s 
+left join products p on s.product_id=p.product_id
+order by Product_name) as price_chng 
+join
+(select p.product_name,p.price*(s.discount_applied/100) as Price_Change,s.sale_date
+from sales s 
+left join products p on s.product_id=p.product_id
+order by Product_name */ 
+/* Dynamic Pricing Simulation: Challenge students to analyze how price changes for
+ products impact sales volume, revenue, and customer behavior. */
+WITH Price_Changes AS (
+    SELECT 
+        p.product_id,
+        p.product_name,
+        s.sale_date AS current_price_date,
+        LAG(s.sale_date) OVER (PARTITION BY p.product_id ORDER BY s.sale_date) AS previous_price_date,
+        ROUND(p.price * (1 - COALESCE(s.discount_applied, 0) / 100), 2) AS adjusted_price,
+        ROUND(LAG(p.price * (1 - COALESCE(s.discount_applied, 0) / 100)) OVER (PARTITION BY p.product_id ORDER BY s.sale_date), 2) AS previous_price,
+        ROUND(
+            p.price * (1 - COALESCE(s.discount_applied, 0) / 100) - 
+            LAG(p.price * (1 - COALESCE(s.discount_applied, 0) / 100)) OVER (PARTITION BY p.product_id ORDER BY s.sale_date),
+            2
+        ) AS price_difference
+    FROM 
+        sales s
+    JOIN 
+        products p ON s.product_id = p.product_id
+),
+Sales_Summary AS (
+    SELECT 
+        s.product_id,
+        s.sale_date,
+        SUM(s.quantity_sold) AS sales_volume,
+        ROUND(SUM(s.total_amount), 2) AS revenue
+    FROM 
+        sales s
+    GROUP BY 
+        s.product_id, s.sale_date
+),
+Customer_Behavior AS (
+    SELECT 
+        t.product_id,
+        t.previous_price_date,
+        t.current_price_date,
+        t.adjusted_price AS current_price,
+        COUNT(DISTINCT s.customer_id) AS customer_count,
+        ROUND(SUM(CASE WHEN c.gender = 'male' THEN s.total_amount ELSE 0 END), 2) AS Total_Sales_Males,
+        ROUND(SUM(CASE WHEN c.gender = 'female' THEN s.total_amount ELSE 0 END), 2) AS Total_Sales_Females,
+        ROUND(AVG(s.quantity_sold), 2) AS avg_quantity_sold,
+        ROUND(SUM(CASE WHEN c.date_of_birth > '2020-01-01' THEN s.total_amount ELSE 0 END), 2) AS GenZ_sales,
+        ROUND(SUM(CASE WHEN c.date_of_birth > '1980-01-01' AND c.date_of_birth <= '2020-01-01' THEN s.total_amount ELSE 0 END), 2) AS Millennials_sales,
+        ROUND(SUM(CASE WHEN c.date_of_birth > '1960-01-01' AND c.date_of_birth <= '1980-01-01' THEN s.total_amount ELSE 0 END), 2) AS Boomers_sales,
+        ROUND(SUM(CASE WHEN c.date_of_birth <= '1960-01-01' THEN s.total_amount ELSE 0 END), 2) AS Old_sales
+    FROM 
+        sales s
+    JOIN 
+        Price_Changes t 
+    ON 
+        s.product_id = t.product_id 
+        AND s.sale_date BETWEEN t.previous_price_date AND t.current_price_date
+    JOIN 
+        customers c 
+    ON 
+        s.customer_id = c.customer_id
+    WHERE 
+        t.price_difference <> 0
+    GROUP BY 
+        t.product_id, t.previous_price_date, t.current_price_date, t.adjusted_price
+)
+SELECT 
+    pc.product_id,
+    pc.product_name,
+    pc.current_price_date,
+    pc.adjusted_price AS current_price,
+    cb.previous_price_date,
+    COALESCE(pc.previous_price, 0) AS previous_price,
+    COALESCE(pc.price_difference, 0) AS price_difference,
+    ss.sales_volume,
+    ss.revenue,
+    cb.customer_count,
+    COALESCE(cb.Total_Sales_Males, 0) AS Males_Sales,
+    COALESCE(cb.Total_Sales_Females, 0) AS Females_Sales,
+    COALESCE(cb.avg_quantity_sold, 0) AS avg_quantity_sold,
+    COALESCE(cb.GenZ_sales, 0) AS GenZ_sales,
+    COALESCE(cb.Millennials_sales, 0) AS Millennials_sales,
+    COALESCE(cb.Boomers_sales, 0) AS Boomers_sales,
+    COALESCE(cb.Old_sales, 0) AS Old_sales
+FROM 
+    Price_Changes pc
+JOIN 
+    Sales_Summary ss 
+ON 
+    pc.product_id = ss.product_id AND pc.current_price_date = ss.sale_date
+LEFT JOIN 
+    Customer_Behavior cb 
+ON 
+    pc.product_id = cb.product_id AND pc.current_price_date = cb.current_price_date
+ORDER BY 
+    pc.product_id, pc.current_price_date;
+
+    
+/* Customer Purchase Patterns: Analyze purchase patterns using time-series data and
+ window functions to find high-frequency buying behavior.*/
+ WITH Purchase_Intervals AS 
+(
+    SELECT 
+        customer_id, 
+        sale_date, 
+        total_amount,
+        COALESCE(DATEDIFF(sale_date, LAG(sale_date) OVER(PARTITION BY customer_id ORDER BY sale_date)), 0) AS Difference_of_days
+    FROM 
+        sales
+),
+
+Purchase_Patterns AS 
+(
+    SELECT 
+        customer_id, 
+        ROUND(SUM(total_amount), 2) AS Total_Spent,
+        COUNT(*) AS Total_purchasing,
+        ROUND(AVG(Difference_of_days), 2) AS Average_day_of_purchase
+    FROM 
+        Purchase_Intervals
+    GROUP BY 
+        customer_id
+)
+
+SELECT 
+    c.customer_id, 
+    c.first_name,
+    c.last_name,
+    pp.Total_Spent, 
+    pp.Total_purchasing, 
+    pp.Average_day_of_purchase 
+FROM 
+    customers c
+JOIN 
+    Purchase_Patterns pp ON c.customer_id = pp.customer_id
+ORDER BY 
+    pp.Total_purchasing DESC, 
+    pp.Average_day_of_purchase ASC; 
+    /*  Predictive Analytics: Use past data to predict which customers are most likely to churn
+ and recommend strategies to retain them */
+ WITH DataQualityChecks AS (
+    -- Validate and clean input data
+    SELECT 
+        customer_id,
+        first_name,
+        last_name,
+        CASE 
+            WHEN registration_date > (select max(sale_date) from sales) THEN NULL -- Future dates not allowed
+            WHEN registration_date < '2000-01-01' THEN NULL -- Suspicious old dates
+            ELSE registration_date 
+        END as registration_date
+    FROM customers
+    WHERE customer_id IS NOT NULL
+),
+
+SalesValidation AS (
+    -- Validate sales data and handle anomalies
+    SELECT 
+        sale_id,
+        customer_id,
+        sale_date,
+        CASE 
+            WHEN total_amount < 0 THEN 0 -- Handle negative amounts
+            WHEN total_amount > 100000 THEN NULL -- Flag suspicious high values
+            ELSE total_amount 
+        END as total_amount,
+        CASE 
+            WHEN discount_applied < 0 THEN 0
+            WHEN discount_applied > 100 THEN 100
+            ELSE discount_applied 
+        END as discount_applied
+    FROM sales
+    WHERE sale_date <= (SELECT max(sale_date) from sales)
+    AND sale_date >= '2000-01-01'
+),
+
+CustomerMetrics AS (
+    -- Calculate comprehensive customer metrics
+    SELECT 
+        c.customer_id,
+        c.first_name,
+        c.last_name,
+        c.registration_date,
+        -- Recency metrics
+        DATEDIFF((select max(sale_date) from sales), MAX(s.sale_date)) as days_since_last_purchase,
+        DATEDIFF((select max(sale_date) from sales), MIN(s.sale_date)) as days_since_first_purchase,
+        -- Frequency metrics
+        COUNT(DISTINCT s.sale_id) as total_purchases,
+        COUNT(DISTINCT DATE_FORMAT(s.sale_date, '%Y-%m')) as distinct_months_with_purchases,
+        -- Monetary metrics
+        COALESCE(AVG(s.total_amount), 0) as avg_order_value,
+        COALESCE(MAX(s.total_amount), 0) as highest_order_value,
+        -- Engagement metrics
+        AVG(s.discount_applied) as avg_discount_used,
+        MAX(s.discount_applied) as max_discount_used,
+        COUNT(DISTINCT CASE WHEN s.discount_applied > 0 THEN s.sale_id END) as discounted_purchases,
+        -- Purchase patterns
+        STDDEV(DATEDIFF(s.sale_date, c.registration_date)) as purchase_pattern_variance,
+        -- Customer lifetime value
+        COALESCE(SUM(s.total_amount), 0) as total_spent,
+        -- Seasonality analysis
+        COUNT(DISTINCT CASE WHEN MONTH(s.sale_date) IN (12,1,2) THEN s.sale_id END) as winter_purchases,
+        COUNT(DISTINCT CASE WHEN MONTH(s.sale_date) IN (3,4,5) THEN s.sale_id END) as spring_purchases,
+        COUNT(DISTINCT CASE WHEN MONTH(s.sale_date) IN (6,7,8) THEN s.sale_id END) as summer_purchases,
+        COUNT(DISTINCT CASE WHEN MONTH(s.sale_date) IN (9,10,11) THEN s.sale_id END) as fall_purchases
+    FROM 
+        DataQualityChecks c
+        LEFT JOIN SalesValidation s ON c.customer_id = s.customer_id
+    GROUP BY 
+        c.customer_id,
+        c.first_name,
+        c.last_name,
+        c.registration_date
+),
+
+-- Calculate average order value threshold (75th percentile approximation)
+ValueThresholds AS (
+    SELECT 
+        AVG(avg_order_value) as median_order_value,
+        (
+            SELECT AVG(avg_order_value)
+            FROM (
+                SELECT avg_order_value
+                FROM CustomerMetrics
+                WHERE avg_order_value > (SELECT AVG(avg_order_value) FROM CustomerMetrics)
+            ) as higher_half
+        ) as high_value_threshold
+    FROM CustomerMetrics
+),
+
+CustomerSegmentation AS (
+    -- Add customer segmentation based on behavior
+    SELECT 
+        cm.*,
+        CASE
+            WHEN total_purchases = 0 THEN 'Never Purchased'
+            WHEN total_purchases = 1 AND days_since_last_purchase > 30 THEN 'One-Time Customer'
+            WHEN avg_order_value > vt.high_value_threshold
+                AND total_purchases > 10 THEN 'VIP'
+            WHEN total_purchases > 5 AND days_since_last_purchase < 30 THEN 'Loyal'
+            WHEN days_since_last_purchase < 30 THEN 'Active'
+            ELSE 'Inactive'
+        END as customer_segment,
+        CASE
+            WHEN winter_purchases > GREATEST(spring_purchases, summer_purchases, fall_purchases) THEN 'Winter'
+            WHEN spring_purchases > GREATEST(winter_purchases, summer_purchases, fall_purchases) THEN 'Spring'
+            WHEN summer_purchases > GREATEST(winter_purchases, spring_purchases, fall_purchases) THEN 'Summer'
+            WHEN fall_purchases > GREATEST(winter_purchases, spring_purchases, summer_purchases) THEN 'Fall'
+            ELSE 'No Seasonal Preference'
+        END as preferred_season
+    FROM 
+        CustomerMetrics cm
+        CROSS JOIN ValueThresholds vt
+),
+
+ChurnRiskScoring AS (
+    -- Enhanced risk scoring with more factors
+    SELECT 
+        cs.*,
+        CASE 
+            WHEN days_since_last_purchase IS NULL THEN 100  -- No purchases is highest risk
+            ELSE LEAST(100, 
+                (days_since_last_purchase * 0.3) +          -- Recency weight reduced
+                (CASE 
+                    WHEN total_purchases = 0 THEN 35
+                    WHEN total_purchases = 1 THEN 25
+                    WHEN total_purchases < 5 THEN 15
+                    ELSE 0
+                END) +                                      -- Frequency weight
+                (CASE 
+                    WHEN avg_discount_used > 15 THEN 10     -- Discount dependency
+                    WHEN avg_discount_used > 10 THEN 5
+                    ELSE 0
+                END) +
+                (CASE 
+                    WHEN DATEDIFF((select max(sale_date) from sales), registration_date) < 90 
+                    AND total_purchases < 2 THEN 15         -- New customer risk
+                    ELSE 0
+                END) +
+                (CASE 
+                    WHEN purchase_pattern_variance > 50 THEN 10  -- Inconsistent purchase pattern
+                    WHEN purchase_pattern_variance > 30 THEN 5
+                    ELSE 0
+                END) +
+                (CASE 
+                    WHEN total_spent < (SELECT AVG(total_spent) FROM CustomerMetrics) THEN 5
+                    ELSE 0
+                END) +                                      -- Below average spending
+                (CASE 
+                    WHEN customer_segment = 'One-Time Customer' THEN 15
+                    WHEN customer_segment = 'Inactive' THEN 10
+                    ELSE 0
+                END)                                        -- Segment-based risk
+            )
+        END as churn_risk_score,
+        -- Enhanced risk categorization
+        CASE 
+            WHEN days_since_last_purchase IS NULL 
+                OR days_since_last_purchase > 90 THEN 'CRITICAL'
+            WHEN days_since_last_purchase > 60 
+                OR (total_purchases = 1 AND days_since_last_purchase > 30) THEN 'VERY HIGH'
+            WHEN days_since_last_purchase > 30 
+                OR total_purchases < 2 THEN 'HIGH'
+            WHEN days_since_last_purchase > 15 THEN 'MEDIUM'
+            ELSE 'LOW'
+        END as risk_category
+    FROM 
+        CustomerSegmentation cs
+)
+
+-- Final output with comprehensive analysis and targeted recommendations
+SELECT 
+    customer_id,
+    CONCAT(first_name, ' ', last_name) as customer_name,
+    customer_segment,
+    preferred_season,
+    days_since_last_purchase,
+    total_purchases,
+    distinct_months_with_purchases,
+    ROUND(avg_order_value, 2) as avg_order_value,
+    ROUND(total_spent, 2) as total_spent,
+    ROUND(avg_discount_used, 1) as avg_discount_percentage,
+    discounted_purchases,
+    churn_risk_score,
+    risk_category,
+    CASE 
+        WHEN risk_category = 'CRITICAL' THEN 
+            CASE customer_segment
+                WHEN 'VIP' THEN 'Immediate personal contact needed. Offer exclusive VIP renewal benefit.'
+                WHEN 'One-Time Customer' THEN 'Send win-back campaign with first-time customer discount revival.'
+                ELSE 'Immediate recovery campaign with significant incentive.'
+            END
+        WHEN risk_category = 'VERY HIGH' THEN 
+            CASE 
+                WHEN avg_discount_used > 15 THEN 'Send targeted offer matching their typical discount level.'
+                WHEN preferred_season = (
+                    SELECT CASE 
+                        WHEN MONTH((select max(sale_date) from sales)) IN (12,1,2) THEN 'Winter'
+                        WHEN MONTH((select max(sale_date) from sales)) IN (3,4,5) THEN 'Spring'
+                        WHEN MONTH((select max(sale_date) from sales)) IN (6,7,8) THEN 'Summer'
+                        ELSE 'Fall' 
+                    END
+                ) THEN 'Launch seasonal re-engagement campaign.'
+                ELSE 'Send personalized win-back offer based on past purchase history.'
+            END
+        WHEN risk_category = 'HIGH' THEN 
+            CASE customer_segment
+                WHEN 'Loyal' THEN 'Loyalty program upgrade offer with next purchase bonus.'
+                ELSE 'Re-engagement campaign with product recommendations.'
+            END
+        WHEN risk_category = 'MEDIUM' THEN 
+            CASE 
+                WHEN discounted_purchases > 5 THEN 'Include in value-proposition messaging without heavy discounts.'
+                ELSE 'Send engagement campaign with new product announcements.'
+            END
+        ELSE 
+            CASE customer_segment
+                WHEN 'VIP' THEN 'Continue VIP experience with exclusive preview access.'
+                WHEN 'Loyal' THEN 'Strengthen relationship with loyalty program benefits.'
+                ELSE 'Maintain engagement with personalized product recommendations.'
+            END
+    END as recommended_action
+FROM 
+    ChurnRiskScoring
+ORDER BY 
+    churn_risk_score DESC,
+    total_spent DESC;
